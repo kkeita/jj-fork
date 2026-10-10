@@ -22,6 +22,10 @@ and this project adheres to
   file with conflict markers in your text editor. Unlike the other merge tools,
   it supports conflicts with more than two sides.
 
+* `jj run` supports `--keep-changes` flag to keep changes made by a command
+  even if it fails. This can be wanted behavior when using tools like `Prek`
+  or `pre-commit`. `
+
 ### Fixed bugs
 
 * Shell completion now suggests tag names for `jj tag track`, `jj tag untrack`,
