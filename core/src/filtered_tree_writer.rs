@@ -94,6 +94,7 @@ impl TreeRewriteVisitor for MatcherVisitor<'_> {
                         RewrittenEntry::Subtree {
                             base_tree_id: sub_tree_id.clone(),
                             context: (),
+                            if_empty: None,
                         },
                     ));
                 }

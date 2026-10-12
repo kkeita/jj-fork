@@ -42,8 +42,13 @@ pub(crate) enum RewrittenEntry<C> {
     /// The entry has this value.
     Value(TreeValue),
     /// The entry is the rewritten version of `base_tree_id`, rewritten with
-    /// `context`. The entry is omitted if the rewritten tree is empty.
-    Subtree { base_tree_id: TreeId, context: C },
+    /// `context`. If the rewritten tree is empty, the entry has the value
+    /// `if_empty` instead, or is omitted if that's `None`.
+    Subtree {
+        base_tree_id: TreeId,
+        context: C,
+        if_empty: Option<TreeValue>,
+    },
 }
 
 /// Decides how each tree is rewritten by [`rewrite_trees()`].
@@ -110,7 +115,7 @@ enum WorkItem<C> {
 /// A rewritten tree that's waiting for some of its subtrees to be written.
 struct UnfinishedTree {
     // Entries of the rewritten tree. Entries for subtrees that have not yet been
-    // written, or that turned out to be empty, are `None`.
+    // written have the value to use if the subtree turns out to be empty.
     entries: Vec<(RepoPathComponentBuf, Option<TreeValue>)>,
     remaining_subtrees: usize,
 }
@@ -186,6 +191,7 @@ impl<V: TreeRewriteVisitor> TreeRewriter<'_, V> {
                 RewrittenEntry::Subtree {
                     base_tree_id,
                     context,
+                    if_empty,
                 } => {
                     let subtree_key = (tree.dir().join(&name), base_tree_id, context);
                     if let Some(new_subtree_id) = self.rewritten_trees.get(&subtree_key) {
@@ -193,8 +199,11 @@ impl<V: TreeRewriteVisitor> TreeRewriter<'_, V> {
                         // current tree is conflicted but the subtree is not and we
                         // processed the subtree when we visited another side of the
                         // current conflict.
-                        let value = (new_subtree_id != self.store.empty_tree_id())
-                            .then(|| TreeValue::Tree(new_subtree_id.clone()));
+                        let value = if new_subtree_id == self.store.empty_tree_id() {
+                            if_empty
+                        } else {
+                            Some(TreeValue::Tree(new_subtree_id.clone()))
+                        };
                         new_entries.push((name, value));
                     } else {
                         self.parent_trees
@@ -202,7 +211,7 @@ impl<V: TreeRewriteVisitor> TreeRewriter<'_, V> {
                             .or_default()
                             .push((key.clone(), index));
                         self.schedule_read(subtree_key);
-                        new_entries.push((name, None));
+                        new_entries.push((name, if_empty));
                         remaining_subtrees += 1;
                     }
                 }
@@ -229,6 +238,12 @@ impl<V: TreeRewriteVisitor> TreeRewriter<'_, V> {
         }
         let (dir, tree_id, context) = key;
         let store = self.store.clone();
+        if tree_id == *store.empty_tree_id() {
+            let result = Ok(Tree::empty(store, dir));
+            self.work
+                .push(async move { WorkItem::ReadTree { context, result } }.boxed());
+            return;
+        }
         self.work.push(
             async move {
                 store
@@ -251,7 +266,18 @@ impl<V: TreeRewriteVisitor> TreeRewriter<'_, V> {
                 .filter_map(|(name, value)| Some((name, value?)))
                 .collect(),
         );
+        // TODO: Write trees with identical contents only once. For example, if the
+        // only conflict in a merged tree is in `dir/file` and it gets resolved, the
+        // `dir/` and root trees end up the same for all terms.
         let store = self.store.clone();
+        if tree.is_empty() && !key.0.is_root() {
+            // Empty subtrees are omitted from their parents, so there's no need to write
+            // them
+            let result = Ok(store.empty_tree_id().clone());
+            self.work
+                .push(async move { WorkItem::WrittenTree { key, result } }.boxed());
+            return;
+        }
         self.work.push(
             async move {
                 let result = store
