@@ -26,6 +26,11 @@ and this project adheres to
   file with conflict markers in your text editor. Unlike the other merge tools,
   it supports conflicts with more than two sides.
 
+* New `sparse()` fileset function matches the paths included by the current
+  workspace's sparse patterns. For example, `jj log -r 'files(sparse())'`
+  shows only commits that touch files in the sparse checkout.
+  [#7816](https://github.com/jj-vcs/jj/issues/7816)
+
 ### Fixed bugs
 
 * Shell completion now suggests tag names for `jj tag track`, `jj tag untrack`,
